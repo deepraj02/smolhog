@@ -20,5 +20,40 @@ services:
     image: adminer
     ports:
       - "8080:8080"
+  
+  api-gateway:
+    build: ./infra/backend/api-gateway
+    ports:
+      - "3001:3001"
+    environment:
+      - EVENT_PROCESSOR_URL=http://event-processor:8000
+    depends_on:
+      - event-processor
+
+
+  event-processor:
+    build: ./infra/backend/event-processor
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - rabbitmq
+
+  # Background Worker
+  worker:
+    build: ./infra/backend/workers
+    depends_on:
+      - postgres
+      - rabbitmq
+
+  # Dashboard
+  dashboard:
+    build: ./infra/frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+    depends_on:
+      - api-gateway
 volumes:
   postgres_data:
