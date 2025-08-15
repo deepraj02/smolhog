@@ -10,50 +10,71 @@ services:
     volumes:
     - postgres_data:/var/lib/postgresql/data
     - ./migrations:/docker-entrypoint-initdb.d/
+    networks:
+      - smolhog-network
 
   rabbitmq:
     image: rabbitmq:4.0-management
     ports:
       - "5672:5672"
       - "15672:15672"
+    networks:
+      - smolhog-network
+
   adminer:
     image: adminer
     ports:
       - "8080:8080"
-  
-  api-gateway:
-    build: ./infra/backend/api-gateway
-    ports:
-      - "3001:3001"
-    environment:
-      - EVENT_PROCESSOR_URL=http://event-processor:8000
-    depends_on:
-      - event-processor
-
+    networks:
+      - smolhog-network
 
   event-processor:
-    build: ./infra/backend/event-processor
+    build: 
+      context: ./infra/backend/event-processor
     ports:
       - "8000:8000"
+    volumes:
+      - ./infra/backend/event-processor:/app
+      - /app/venv
     depends_on:
       - postgres
       - rabbitmq
+    networks:
+      - smolhog-network
 
-  # Background Worker
   worker:
-    build: ./infra/backend/workers
+    build: 
+      context: ./infra/backend/workers
+    volumes:
+      - ./infra/backend/workers:/app
+      - /app/venv
     depends_on:
       - postgres
       - rabbitmq
+    networks:
+      - smolhog-network
 
-  # Dashboard
   dashboard:
-    build: ./infra/frontend
+    build: 
+      context: ./infra/frontend
+      target: development
     ports:
       - "3000:3000"
+    volumes:
+      - ./infra/frontend:/app
+      - /app/node_modules
+      - /app/.next
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:3001
+      - NEXT_PUBLIC_API_URL=http://event-processor:8000
+      - NODE_ENV=development
     depends_on:
-      - api-gateway
+      - event-processor
+    networks:
+      - smolhog-network
+
 volumes:
   postgres_data:
+
+networks:
+  smolhog-network:
+    driver: bridge
