@@ -1,19 +1,31 @@
+
 import json
 import logging
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncpg
 import aio_pika
 
-# Configure logging
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-DATABASE_URL = 'postgresql://user:password@localhost:5432/smolhog_analytics'
-RABBITMQ_URL = 'amqp://user:password@localhost:5672/'
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],  
+    allow_headers=["*"],  
+)
+
+
+DATABASE_URL = 'postgresql://user:password@postgres:5432/smolhog_analytics'
+RABBITMQ_URL = 'amqp://guest:guest@rabbitmq:5672/'
 
 class Event(BaseModel):
     event_id: str
@@ -27,32 +39,46 @@ class EventBatch(BaseModel):
     events: List[Event]
 
 
-'''
-Receives, queues and processes events
-'''
+def validate_api_key(smolhog_api_key: str = Header(None)):
+    if not smolhog_api_key or smolhog_api_key != 'smolhog-ding-dong':
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return smolhog_api_key
+
+@app.get("/")
+async def root():
+    return {"message": "SmolHog Event Processor", "status": "running"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "message": "Event Processor is running"}
+
 @app.post("/events")
-async def recieve_events(
+async def receive_events(
     event_batch: EventBatch,
-    background_tasks: BackgroundTasks
-    ) -> Dict[str, Any]:
+    background_tasks: BackgroundTasks,
+    _: str = Depends(validate_api_key)
+) -> Dict[str, Any]:
+    logger.info(f"Received {len(event_batch.events)} events")
+    
+    
     background_tasks.add_task(queue_events, event_batch.events)
+    
     return {
         "status": "success",
         "events_received": len(event_batch.events),
+        "message": "Events queued for processing"
     }
 
-
 @app.get('/analytics/stats')
-async def get_stats()->Dict[str, Any]:
+async def get_stats() -> Dict[str, Any]:
     try:
-        logger.info("Attempting to connect to PostgreSQL database")
+        logger.info("Fetching analytics stats")
         conn = await asyncpg.connect(DATABASE_URL)
-        logger.info("Successfully connected to PostgreSQL database")
         
         total_events = await conn.fetchval("SELECT COUNT(*) FROM events")
         unique_users = await conn.fetchval("SELECT COUNT(DISTINCT user_id) FROM events")
         
-        top_events = await conn.fetchval(
+        top_events = await conn.fetch(
             """
             SELECT event_name, COUNT(*) as event_count
             FROM events
@@ -63,22 +89,21 @@ async def get_stats()->Dict[str, Any]:
         )
         
         await conn.close()
-        logger.info("PostgreSQL connection closed")
+        
         return {
-            "total_events": total_events,
-            "unique_users": unique_users,
+            "total_events": total_events or 0,
+            "unique_users": unique_users or 0,
             "top_events": [{"event": row['event_name'], "count": row['event_count']} for row in top_events]
         }
     except Exception as e:
-        logger.error(f"Failed to connect to PostgreSQL or execute query: {e}")
+        logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.get('/analytics/events')
-async def get_recent_events(limit:int =100)->Dict[str, Any]:
+async def get_recent_events(limit: int = 100) -> Dict[str, Any]:
     try:
-        logger.info("Attempting to connect to PostgreSQL database")
+        logger.info(f"Fetching {limit} recent events")
         conn = await asyncpg.connect(DATABASE_URL)
-        logger.info("Successfully connected to PostgreSQL database")
         
         events = await conn.fetch("""
             SELECT event_name, user_id, properties, timestamp, session_id
@@ -88,32 +113,30 @@ async def get_recent_events(limit:int =100)->Dict[str, Any]:
         """, limit)
         
         await conn.close()
-        logger.info("PostgreSQL connection closed")
+        
+        processed_events = []
+        for row in events:
+            processed_event = {
+                "event_name": row['event_name'],
+                "user_id": row['user_id'],
+                "properties": json.loads(row['properties']) if isinstance(row['properties'], str) else row['properties'],
+                "timestamp": row['timestamp'],
+                "session_id": row['session_id']
+            }
+            processed_events.append(processed_event)
         return {
-            "events": [
-                {
-                    "event_name": row['event_name'],
-                    "user_id": row['user_id'],
-                    "properties": row['properties'],
-                    "timestamp": row['timestamp'],
-                    "session_id": row['session_id']
-                }
-                for row in events
-            ]
+            "events": processed_events
         }
     except Exception as e:
-        logger.error(f"Failed to connect to PostgreSQL or execute query: {e}")
+        logger.error(f"Error getting events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 async def queue_events(events: List[Event]):
     try:
-        logger.info("Attempting to connect to RabbitMQ")
-        conn = await aio_pika.connect_robust(RABBITMQ_URL)
-        logger.info("Successfully connected to RabbitMQ")
-        
-        chan = await conn.channel()
-        queue= await chan.declare_queue('events', durable=True)
         logger.info(f"Queuing {len(events)} events to RabbitMQ")
+        conn = await aio_pika.connect_robust(RABBITMQ_URL)
+        chan = await conn.channel()
+        queue = await chan.declare_queue('events', durable=True)
         
         for event in events:
             message = aio_pika.Message(
@@ -123,11 +146,10 @@ async def queue_events(events: List[Event]):
             await chan.default_exchange.publish(message, routing_key="events")
         
         await conn.close()
-        logger.info("RabbitMQ connection closed")
+        logger.info(f"Successfully queued {len(events)} events")
+        
     except Exception as e:
-        logger.error(f"Error connecting to RabbitMQ or queuing events: {e}")
-
-
+        logger.error(f"Error queuing events: {e}")
 
 if __name__ == "__main__":
     import uvicorn

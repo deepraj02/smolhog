@@ -5,7 +5,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SmolHog.initialize(
     apiKey: 'smolhog-ding-dong',
-    host: 'http://localhost:3001',
+    host: 'http://localhost:8000',
   );
 
   runApp(const MyApp());

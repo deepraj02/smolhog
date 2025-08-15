@@ -67,7 +67,7 @@ class SmolHog {
 
     try {
       final response = await http.post(
-        Uri.parse('$_host/api/events'),
+        Uri.parse('$_host/events'),
         headers: {'Content-Type': 'application/json', 'smolhog-api-key': _apiKey},
         body: jsonEncode({'events': events}),
       );

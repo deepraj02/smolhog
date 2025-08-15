@@ -27,13 +27,13 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     try {
-      
-      const statsResponse = await fetch('/api/analytics/stats');
+      const [statsResponse, eventsResponse] = await Promise.all([
+        fetch('/analytics/stats'),
+        fetch('/analytics/events')
+      ])
+
       const statsData = await statsResponse.json();
       setStats(statsData);
-
-      
-      const eventsResponse = await fetch('/api/analytics/events?limit=50');
       const eventsData = await eventsResponse.json();
       setEvents(eventsData.events);
 
@@ -119,3 +119,4 @@ export default function Dashboard() {
     </div>
   );
 }
+
