@@ -32,7 +32,7 @@ A lightweight analytics engine with Flutter SDK and backend infrastructure.
 - **Purpose**: Analytics dashboard and management interface
 - **Features**: API proxy configuration, animated landing page
 
-### Database (`database/`)
+### Database (`migrations/`)
 - **Tech**: PostgreSQL
 - **Purpose**: Store analytics data and events
 
@@ -48,24 +48,13 @@ await SmolHog.initialize(
 );
 ```
 
-### Backend Services
+### Run Locally
+
 ```bash
-# API Gateway
-cd infra/backend/api-gateway
-bun install
-bun run index.ts
-
-# Frontend
-cd infra/frontend
-npm install
-npm run dev
+make up
+make migrate-up
 ```
-
-### Database
-```sql
-psql -f database/schema.sql
-```
-
+then run `main.dart` at [*smolhog_flutter/example/lib/main.dart*](smolhog_flutter/example/lib/main.dart)
 ## Development
 
 - **Flutter SDK**: Standard Dart/Flutter development
