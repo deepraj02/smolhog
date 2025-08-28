@@ -3,6 +3,23 @@
 A lightweight analytics engine with Flutter SDK and backend infrastructure.
 
 ## Architecture
+![Smolhog-1000ft](assets/smolhog.png)
+
+
+## Tech Stack
+
+| Technology         | Purpose                           |
+| ------------------ | --------------------------------- |
+| Typescript/Express | API Gateway                       |
+| Flutter/ Dart      | Flutter SDK                       |
+| Python/ FastAPI    | Event Processor                   |
+| PostgreSQL         | Database                          |
+| RabbitMQ           | Message Broker                    |
+| NextJS             | Analytics Dashboard (Client Side) |
+| Jaeger             | Tracing                           |
+| Prometheus         | Monitoring                        |
+| Grafana & Loki     | Dashboard & Logs (System Infra)   |
+| Docker             | Containerization                  |
 
 ### Flutter SDK (`smolhog_flutter/`)
 - **Purpose**: Client-side analytics tracking for Flutter apps
