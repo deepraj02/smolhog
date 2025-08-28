@@ -1,53 +1,88 @@
-const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
-const cors = require('cors');
+import cors from 'cors';
+import express from "express";
+import { createProxyMiddleware } from 'http-proxy-middleware';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const EVENT_PROCESSOR_URL = process.env.EVENT_PROCESSOR_URL || 'http://localhost:8000';
+const API_URL = process.env.EVENT_PROCESSOR_URL || 'http://localhost:8000';
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// API Key validation middleware
-const validateApiKey = (req, res, next) => {
-  const apiKey = req.headers['smolhog-api-key'];
-  
-  if (!apiKey || apiKey !== 'smolhog-ding-dong') {
-    return res.status(401).json({ error: 'Invalid or missing API key' });
-  }
-  
-  next();
-};
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', service: 'api-gateway' });
-});
-
-// Events endpoint - explicitly handle POST requests
-app.post('/api/events', validateApiKey, createProxyMiddleware({
-  target: EVENT_PROCESSOR_URL,
-  changeOrigin: true,
-  pathRewrite: {
-    '^/api/events': '/events'
-  },
-  onProxyReq: (proxyReq, req, res) => {
-    console.log(`Proxying ${req.method} ${req.url} to ${EVENT_PROCESSOR_URL}/events`);
-  },
-  onError: (err, req, res) => {
-    console.error('Proxy error:', err);
-    res.status(500).json({ error: 'Proxy error' });
-  }
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', "OPTIONS"],
+    allowedHeaders: ['Content-Type', 'Authorization', 'smolhog-api-key']
 }));
 
-// Catch-all for undefined routes
-app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+app.use(express.json());
+app.get('/', (req, res) => {
+    res.json({ message: "Welcome to SmolHog API Gateway" });
 });
 
+
+const createProxyOptions = (pathRewrite: { [key: string]: string }) => ({
+    target: API_URL,
+    changeOrigin: true,
+    pathRewrite,
+    onError: (err: Error, req: express.Request, res: express.Response) => {
+        console.error('Proxy Error:', err.message);
+        console.error('Target URL:', API_URL);
+        console.error('Request URL:', req.url);
+        res.status(500).json({ error: 'Proxy error', message: err.message });
+    },
+    onProxyReq: (proxyReq: any, req: express.Request, res: express.Response) => {
+        Object.keys(req.headers).forEach(key => {
+            proxyReq.setHeader(key, req.headers[key]);
+        });
+        console.log(`Proxying ${req.method} ${req.url} to ${API_URL}${proxyReq.path}`);
+        console.log('Headers being forwarded:', req.headers);
+    },
+    onProxyRes: (proxyRes: any, req: express.Request, res: express.Response) => {
+        console.log(`Proxy response: ${proxyRes.statusCode} for ${req.method} ${req.url}`);
+    }
+});
+
+
+app.use((req, res, next) => {
+    const startTime = Date.now();
+
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log(`Headers: ${JSON.stringify(req.headers, null, 2)}`);
+    console.log(`Query: ${JSON.stringify(req.query, null, 2)}`);
+    if (req.body && Object.keys(req.body).length > 0) {
+        console.log(`Body: ${JSON.stringify(req.body, null, 2)}`);
+    }
+
+    const originalEnd = res.end;
+    res.end = function (chunk, encoding, cb) {
+        const duration = Date.now() - startTime;
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - ${res.statusCode} - ${duration}ms`);
+
+        if (res.statusCode >= 400) {
+            console.error(`Error Response: Status ${res.statusCode}`);
+            if (chunk) {
+                console.error(`Error Body: ${chunk.toString()}`);
+            }
+        }
+
+        return originalEnd.call(this, chunk, encoding, cb);
+    };
+
+    next();
+});
+
+
+app.use('/api/events', createProxyMiddleware(createProxyOptions({
+    '^/': '/events'
+})));
+
+app.use('/api/analytics/events', createProxyMiddleware(createProxyOptions({
+    '^/': '/analytics/events'
+})));
+
+app.use('/api/analytics/stats', createProxyMiddleware(createProxyOptions({
+    '^/': '/analytics/stats'
+})));
+
 app.listen(PORT, () => {
-  console.log(`API Gateway running on port ${PORT}`);
-  console.log(`Event Processor URL: ${EVENT_PROCESSOR_URL}`);
+    console.log(`SmolHog Gateway listening on http://localhost:${PORT}`);
+    console.log(`Proxying requests to: ${API_URL}`);
 });

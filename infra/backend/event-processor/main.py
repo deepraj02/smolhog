@@ -38,12 +38,6 @@ class Event(BaseModel):
 class EventBatch(BaseModel):
     events: List[Event]
 
-
-def validate_api_key(smolhog_api_key: str = Header(None)):
-    if not smolhog_api_key or smolhog_api_key != 'smolhog-ding-dong':
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    return smolhog_api_key
-
 @app.get("/")
 async def root():
     return {"message": "SmolHog Event Processor", "status": "running"}
@@ -56,7 +50,6 @@ async def health_check():
 async def receive_events(
     event_batch: EventBatch,
     background_tasks: BackgroundTasks,
-    _: str = Depends(validate_api_key)
 ) -> Dict[str, Any]:
     logger.info(f"Received {len(event_batch.events)} events")
     
