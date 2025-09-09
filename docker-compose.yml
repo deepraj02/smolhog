@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:16-alpine  
     environment:
       POSTGRES_DB: smolhog_analytics
       POSTGRES_USER: user
@@ -8,21 +8,31 @@ services:
     ports:
       - "5432:5432"
     volumes:
-    - postgres_data:/var/lib/postgresql/data
-    - ./migrations:/docker-entrypoint-initdb.d/
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d/
     networks:
       - smolhog-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d smolhog_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   rabbitmq:
-    image: rabbitmq:4.0-management
+    image: rabbitmq:3.12-management-alpine  
     ports:
       - "5672:5672"
       - "15672:15672"
     networks:
       - smolhog-network
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   adminer:
-    image: adminer
+    image: adminer:4.8.1  
     ports:
       - "8080:8080"
     networks:
@@ -35,22 +45,45 @@ services:
       - "8000:8000"
     volumes:
       - ./infra/backend/event-processor:/app
-      - /app/venv
+      - /app/__pycache__
     depends_on:
-      - postgres
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - smolhog-network
+
+  api-gateway:
+    build: 
+      context: ./infra/backend/api-gateway
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./infra/backend/api-gateway:/app
+      - /app/node_modules
+    environment:
+      - EVENT_PROCESSOR_URL=http://event-processor:8000
+    depends_on:
+      - event-processor
     networks:
       - smolhog-network
 
   worker:
     build: 
       context: ./infra/backend/workers
+      target: development
     volumes:
       - ./infra/backend/workers:/app
-      - /app/venv
+      - /app/__pycache__
+    environment:
+      - PYTHONUNBUFFERED=1
+      - WATCHDOG_USE_POLLING=true
     depends_on:
-      - postgres
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - smolhog-network
 
@@ -65,15 +98,16 @@ services:
       - /app/node_modules
       - /app/.next
     environment:
-      - NEXT_PUBLIC_API_URL=http://event-processor:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NODE_ENV=development
     depends_on:
       - event-processor
     networks:
       - smolhog-network
 
+  
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:2.9.0  
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -84,10 +118,11 @@ services:
       - smolhog-network
 
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:2.9.0
     volumes:
-      - /var/log:/var/log
-      - ./infra/promtail-config.yaml:/etc/promtail/config.yml
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./infra/promtail-config.yaml:/etc/promtail/config.yml:ro
     command: -config.file=/etc/promtail/config.yml
     depends_on:
       - loki
@@ -95,39 +130,48 @@ services:
       - smolhog-network
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:1.50  
     ports:
-      - "16686:16686" 
-      - "14268:14268" 
-      - "4317:4317"   
-      - "4318:4318"   
+      - "16686:16686"
+      - "14268:14268"
+      - "4317:4317"
+      - "4318:4318"
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+      - MEMORY_MAX_TRACES=10000  
     networks:
       - smolhog-network
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.47.0  
     ports:
       - "9090:9090"
     volumes:
-      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'  
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
     networks:
       - smolhog-network
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:10.1.0  
     ports:
-      - "3001:3000"  
+      - "3002:3000"  
     volumes:
-      - ./infra/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
-      - ./infra/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
-      - ./infra/dashboards:/var/lib/grafana/dashboards
-      - grafana_data:/var/lib/grafana  
+      - ./infra/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./infra/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./infra/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin  
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel  
     depends_on:
       - loki
       - jaeger
